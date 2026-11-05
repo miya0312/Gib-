@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GLB トゥーンビューア（iPad対応版）</title>
+<style>
+:root{--bg:#e9edf2;--panel:#fffffff0;--text:#1b2430;--sub:#5b6776;--line:#c8d0da;--accent:#1f6feb;--on-accent:#fff;--err:#c62828;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a2029;--panel:#232b36f0;--text:#e8edf3;--sub:#9aa7b6;--line:#3a4552;--accent:#5b9dff;--on-accent:#0b1118;--err:#ff8a80}}
+:root[data-theme="dark"]{--bg:#1a2029;--panel:#232b36f0;--text:#e8edf3;--sub:#9aa7b6;--line:#3a4552;--accent:#5b9dff;--on-accent:#0b1118;--err:#ff8a80}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Hiragino Sans",system-ui,sans-serif;overscroll-behavior:none}
+#app{height:100%;display:flex;flex-direction:column}
+#stage{flex:1;position:relative;min-height:0;overflow:hidden}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+.ov{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:20px;background:var(--bg);background:color-mix(in srgb,var(--bg) 80%,transparent)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:440px;width:100%;box-sizing:border-box;line-height:1.6;font-size:14px}
+#hint{display:flex;pointer-events:none;color:var(--sub);text-align:center;background:none;font-size:15px}
+.bar{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:10px 0 6px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+#pct{font-size:28px;font-weight:700}#stg{color:var(--sub)}
+#errT{color:var(--err);font-weight:700;font-size:16px}
+#errD{white-space:pre-wrap;word-break:break-all;font-size:12px;color:var(--sub);background:transparent;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0;max-height:34vh;overflow:auto}
+#info{position:absolute;left:8px;top:8px;font-size:11px;color:var(--sub);background:var(--panel);padding:3px 8px;border-radius:8px;pointer-events:none;max-width:90%}
+#panel{background:var(--panel);border-top:1px solid var(--line);padding:10px 14px;display:grid;grid-template-columns:1fr 1fr;gap:8px 14px}
+#panel label{font-size:12px;color:var(--sub);display:flex;flex-direction:column;gap:3px}
+#panel input[type=range]{width:100%;height:28px}
+button,.btn,select{font:inherit;font-size:15px;min-height:44px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--text);padding:0 12px}
+.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600;display:flex;align-items:center;justify-content:center}
+.row{display:flex;gap:8px;margin-top:8px}.row>*{flex:1}
+.full{grid-column:1/-1}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<div id="app">
+ <div id="stage">
+  <div id="info"></div>
+  <div class="ov" id="hint">「GLBファイルを選ぶ」を押してください。<br>ファイルは外部に送信されません。</div>
+  <div class="ov" id="prog"><div class="card"><div id="pct">0%</div><div class="bar"><i id="barI"></i></div><div id="stg">準備中</div><div class="row"><button id="cancel">中止</button></div></div></div>
+  <div class="ov" id="err"><div class="card"><div id="errT"></div><div id="errM" style="margin-top:6px"></div><div id="errD"></div>
+   <div class="row"><button id="retryLow" class="primary">低負荷で再試行</button><button id="errClose">閉じる</button></div></div></div>
+ </div>
+ <div id="panel">
+  <label class="btn primary full">GLBファイルを選ぶ<input id="file" type="file"></label>
+  <label>負荷モード<select id="perf"><option value="auto" selected>自動</option><option value="normal">通常</option><option value="low">低負荷</option></select></label>
+  <label>表示<select id="mode"><option value="toon" selected>トゥーン＋輪郭線</option><option value="toonNoLine">トゥーンのみ</option><option value="orig">元の質感（簡易・比較）</option></select></label>
+  <label>影の段数／濃さ<span style="display:flex;gap:6px"><select id="steps" style="width:64px"><option>2</option><option selected>3</option><option>4</option></select><input id="shadow" type="range" min="0" max="80" value="45"></span></label>
+  <label>輪郭線の太さ<input id="thick" type="range" min="0" max="60" value="18"></label>
+  <button id="reset" class="full">視点リセット</button>
+ </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script>
+/*PARSER_START*/
+function parseGLB(buf){
+ var dv=new DataView(buf);
+ if(buf.byteLength<20||dv.getUint32(0,true)!==0x46546C67)throw new Error('GLB形式ではありません（先頭が glTF ではない）。.gltf など別形式か、壊れたファイルの可能性があります。');
+ var ver=dv.getUint32(4,true);if(ver!==2)throw new Error('glTFバージョン '+ver+' は未対応です（2のみ対応）。');
+ var total=dv.getUint32(8,true);
+ if(total>buf.byteLength)throw new Error('ファイルが途中で切れています（宣言 '+total+' / 実際 '+buf.byteLength+' バイト）。iCloud上で未ダウンロード、または転送中断の可能性があります。');
+ var off=12,json=null,bin=-1;
+ while(off+8<=total){var l=dv.getUint32(off,true),t=dv.getUint32(off+4,true);
+  if(t===0x4E4F534A)json=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,off+8,l)));
+  else if(t===0x004E4942&&bin<0)bin=off+8;
+  off+=8+l;}
+ if(!json)throw new Error('GLB内にJSONチャンクがありません。');
+ if(bin<0)throw new Error('GLB内にバイナリチャンクがありません（外部ファイル参照の.gltf系は非対応）。');
+ var bad=(json.extensionsRequired||[]).filter(function(e){return {KHR_draco_mesh_compression:1,EXT_meshopt_compression:1,KHR_mesh_quantization:1,KHR_texture_basisu:1}[e];});
+ if(bad.length)throw new Error('未対応の必須拡張: '+bad.join(', ')+'（圧縮GLBは非対応。非圧縮で書き出してください）');
+ return {json:json,bin:bin,buf:buf};
+}
+var NC={SCALAR:1,VEC2:2,VEC3:3,VEC4:4};
+function accessor(g,i){
+ var a=g.json.accessors[i];if(!a||a.bufferView==null)throw new Error('accessor '+i+' に bufferView がありません。');
+ if(a.sparse)throw new Error('sparse accessor は未対応です。');
+ var bv=g.json.bufferViews[a.bufferView],n=NC[a.type],C,cs;
+ if(a.componentType===5126){C=Float32Array;cs=4}else if(a.componentType===5125){C=Uint32Array;cs=4}else if(a.componentType===5123){C=Uint16Array;cs=2}else if(a.componentType===5121){C=Uint8Array;cs=1}
+ else throw new Error('未対応のcomponentType: '+a.componentType+'（量子化データ等）');
+ var off=g.bin+(bv.byteOffset||0)+(a.byteOffset||0),el=n*cs,st=bv.byteStride||0,arr;
+ if(st&&st!==el){arr=new C(a.count*n);var ob=new Uint8Array(arr.buffer);for(var k=0;k<a.count;k++)ob.set(new Uint8Array(g.buf,off+k*st,el),k*el);}
+ else if(off%cs!==0)arr=new C(g.buf.slice(off,off+a.count*el));
+ else arr=new C(g.buf,off,a.count*n);
+ return {arr:arr,count:a.count,n:n,min:a.min,max:a.max};
+}
+/*PARSER_END*/
+var $=function(id){return document.getElementById(id)};
+var IOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+var renderer,scene,camera,dirty=true,root=null,meshes=[],texCache={},curFile=null,runId=0,lowActive=false,autoRetried=false;
+var sph={theta:0,phi:Math.PI/2,r:3},tgt=new THREE.Vector3(),homeR=3,homeT=new THREE.Vector3();
+var lineMat,grad=null,lastFile=0;
+function tick(){return new Promise(function(r){setTimeout(r,16)})}
+function showOv(id,on){$(id).style.display=on?'flex':'none'}
+function prog(p,s){p=Math.max(0,Math.min(100,p));$('pct').textContent=Math.round(p)+'%';$('barI').style.width=p+'%';$('stg').textContent=s}
+function fail(title,e,stage){
+ showOv('prog',false);$('errT').textContent=title;$('errM').textContent=(e&&e.message)?e.message:String(e);
+ var gl=renderer&&renderer.getContext();
+ $('errD').textContent=['段階: '+(stage||'不明'),'ファイル: '+(curFile?curFile.name+' ('+(curFile.size/1048576).toFixed(1)+'MB)':'-'),'モード: '+(lowActive?'低負荷':'通常'),
+  'WebGL2: '+(gl&&typeof WebGL2RenderingContext!=='undefined'&&gl instanceof WebGL2RenderingContext),'最大テクスチャ: '+(gl?gl.getParameter(gl.MAX_TEXTURE_SIZE):'-'),'UA: '+navigator.userAgent].join('\n');
+ showOv('err',true);
+}
+function withTimeout(p,ms,label){return new Promise(function(res,rej){var t=setTimeout(function(){rej(new Error(label+'が '+(ms/1000)+' 秒以内に終わりませんでした（端末メモリ不足の可能性）。'))},ms);p.then(function(v){clearTimeout(t);res(v)},function(e){clearTimeout(t);rej(e)})})}
+function readFile(f,onp){
+ return new Promise(function(res,rej){
+  var r=new FileReader(),last=Date.now(),w=setInterval(function(){if(Date.now()-last>25000){clearInterval(w);try{r.abort()}catch(e){}rej(new Error('ファイルの読み込みが25秒間進みません。iCloud上で未ダウンロードの可能性があります。「ファイル」アプリで一度ダウンロードしてから選び直してください。'))}},1000);
+  r.onprogress=function(e){last=Date.now();if(e.lengthComputable)onp(e.loaded/e.total*100)};
+  r.onload=function(){clearInterval(w);res(r.result)};
+  r.onerror=function(){clearInterval(w);rej(new Error('ファイルを読み込めませんでした：'+(r.error&&r.error.message||'不明')))};
+  r.readAsArrayBuffer(f);
+ });
+}
+function decodeTex(g,mat,low){
+ var ti=mat&&mat.pbrMetallicRoughness&&mat.pbrMetallicRoughness.baseColorTexture;if(!ti)return Promise.resolve(null);
+ var t=g.json.textures[ti.index],si=(t.extensions&&t.extensions.EXT_texture_webp)?t.extensions.EXT_texture_webp.source:t.source;
+ if(texCache[si])return texCache[si];
+ var im=g.json.images[si];if(im.bufferView==null)return Promise.reject(new Error('テクスチャがバッファ内にありません（外部URL参照は非対応）。'));
+ var bv=g.json.bufferViews[im.bufferView];
+ var url=URL.createObjectURL(new Blob([new Uint8Array(g.buf,g.bin+(bv.byteOffset||0),bv.byteLength)],{type:im.mimeType||'image/png'}));
+ var p=withTimeout(new Promise(function(res,rej){var img=new Image();img.onload=function(){res(img)};img.onerror=function(){rej(new Error('テクスチャ('+(im.mimeType||'?')+')をデコードできません。Safariが対応していない形式の可能性があります。'))};img.src=url}),45000,'テクスチャのデコード').then(function(img){
+  URL.revokeObjectURL(url);var src=img,w=img.naturalWidth,h=img.naturalHeight,lim=low?1024:2048;
+  if(Math.max(w,h)>lim){var s=lim/Math.max(w,h),c=document.createElement('canvas');c.width=Math.round(w*s);c.height=Math.round(h*s);c.getContext('2d').drawImage(img,0,0,c.width,c.height);src=c;w=c.width;h=c.height}
+  var tx=new THREE.Texture(src);tx.flipY=false;tx.encoding=THREE.sRGBEncoding;tx.wrapS=tx.wrapT=THREE.RepeatWrapping;tx.anisotropy=low?1:4;tx.needsUpdate=true;tx.userData={w:w,h:h};return tx;
+ });
+ texCache[si]=p;return p;
+}
+function disposeRoot(){
+ if(!root)return;scene.remove(root);
+ root.traverse(function(o){if(o.isMesh){if(o.geometry)o.geometry.dispose();['toon','std'].forEach(function(k){var m=o.userData[k];if(m){if(m.map)m.map.dispose();m.dispose()}})}});
+ root=null;meshes=[];texCache={};
+}
+function makeGrad(n,s){var lo=Math.round(255*(1-s)),d=new Uint8Array(n);for(var i=0;i<n;i++)d[i]=Math.round(lo+(255-lo)*i/(n-1));var t=new THREE.DataTexture(d,n,1,THREE.RedFormat);t.minFilter=t.magFilter=THREE.NearestFilter;t.generateMipmaps=false;t.needsUpdate=true;return t}
+function applyStyle(){
+ if(!root)return;var mode=$('mode').value;
+ if(grad)grad.dispose();grad=makeGrad(+$('steps').value,+$('shadow').value/100);
+ lineMat.uniforms.thick.value=+$('thick').value/10000;
+ meshes.forEach(function(m){var u=m.userData;
+  if(mode==='orig'){if(!u.std)u.std=new THREE.MeshStandardMaterial({map:u.map,color:u.map?0xffffff:0xbbbbbb,roughness:.8,metalness:0});m.material=u.std}
+  else{if(!u.toon)u.toon=new THREE.MeshToonMaterial({map:u.map,color:u.map?0xffffff:0xbbbbbb});u.toon.gradientMap=grad;u.toon.needsUpdate=true;m.material=u.toon}
+  u.line.visible=(mode==='toon');});
+ dirty=true;
+}
+function setSize(){var st=$('stage'),w=st.clientWidth,h=st.clientHeight;if(!w||!h)return;renderer.setPixelRatio(lowActive?1:Math.min(window.devicePixelRatio||1,2));renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();dirty=true}
+function updCam(){var s=Math.sin(sph.phi);camera.position.set(tgt.x+sph.r*s*Math.sin(sph.theta),tgt.y+sph.r*Math.cos(sph.phi),tgt.z+sph.r*s*Math.cos(sph.theta));camera.lookAt(tgt);dirty=true}
+function resetView(){sph.theta=0;sph.phi=Math.PI/2;sph.r=homeR;tgt.copy(homeT);updCam()}
+function nodeMat(n){var m=new THREE.Matrix4();if(n.matrix)m.fromArray(n.matrix);else m.compose(new THREE.Vector3().fromArray(n.translation||[0,0,0]),new THREE.Quaternion().fromArray(n.rotation||[0,0,0,1]),new THREE.Vector3().fromArray(n.scale||[1,1,1]));return m}
+async function load(file,perf){
+ var id=++runId,stage='開始',cancelled=function(){return id!==runId};
+ try{
+  curFile=file;showOv('err',false);showOv('hint',false);showOv('prog',true);prog(0,'ファイル読み込み');await tick();
+  var big=file.size>10*1048576,low=(perf==='low')||(perf==='auto'&&IOS&&big);
+  lowActive=low;setSize();
+  stage='ファイル読み込み';var buf=await readFile(file,function(p){prog(p*0.4,'ファイル読み込み '+(file.size/1048576).toFixed(1)+'MB');});
+  if(cancelled())return;
+  stage='GLB解析';prog(42,'GLB解析');await tick();var g=parseGLB(buf),j=g.json;
+  disposeRoot();
+  stage='テクスチャ';var mats=j.materials||[],maps=[];
+  for(var mi=0;mi<mats.length;mi++){prog(45+mi/Math.max(1,mats.length)*25,'テクスチャのデコード（'+(low?'1024px':'最大2048px')+'）');await tick();
+   try{maps[mi]=await decodeTex(g,mats[mi],low)}catch(e){maps[mi]=null;console.warn(e);$('info').dataset.warn='テクスチャ読込失敗: '+e.message}
+   if(cancelled())return;}
+  stage='ジオメトリ構築';prog(72,'ジオメトリ構築');await tick();
+  var grp=new THREE.Group(),nv=0,nt=0,bytes=0,box=new THREE.Box3();
+  var sc=(j.scenes&&j.scenes[j.scene||0])||{nodes:[0]};
+  function walk(ni,pm){var n=j.nodes[ni],wm=pm.clone().multiply(nodeMat(n));
+   if(n.mesh!=null){j.meshes[n.mesh].primitives.forEach(function(pr){
+    if(pr.mode!=null&&pr.mode!==4)return;
+    var geo=new THREE.BufferGeometry(),P=accessor(g,pr.attributes.POSITION);
+    geo.setAttribute('position',new THREE.BufferAttribute(P.arr,3));bytes+=P.arr.byteLength;
+    if(pr.attributes.NORMAL!=null){var N=accessor(g,pr.attributes.NORMAL);geo.setAttribute('normal',new THREE.BufferAttribute(N.arr,3));bytes+=N.arr.byteLength}
+    if(pr.attributes.TEXCOORD_0!=null){var U=accessor(g,pr.attributes.TEXCOORD_0);geo.setAttribute('uv',new THREE.BufferAttribute(U.arr,2));bytes+=U.arr.byteLength}
+    if(pr.indices!=null){var I=accessor(g,pr.indices),ia=I.arr;if(ia instanceof Uint8Array)ia=new Uint16Array(ia);geo.setIndex(new THREE.BufferAttribute(ia,1));bytes+=ia.byteLength;nt+=I.count/3}else nt+=P.count/3;
+    if(!geo.attributes.normal)geo.computeVertexNormals();
+    nv+=P.count;
+    var bb=new THREE.Box3(new THREE.Vector3().fromArray(P.min||[-1,-1,-1]),new THREE.Vector3().fromArray(P.max||[1,1,1]));geo.boundingBox=bb;geo.boundingSphere=bb.getBoundingSphere(new THREE.Sphere());
+    var m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial());m.matrixAutoUpdate=false;m.matrix.copy(wm);m.frustumCulled=false;
+    m.userData.map=maps[pr.material]||null;
+    var l=new THREE.Mesh(geo,lineMat);l.frustumCulled=false;l.renderOrder=-1;m.add(l);m.userData.line=l;
+    box.union(bb.clone().applyMatrix4(wm));meshes.push(m);grp.add(m);
+    ['position','normal','uv'].forEach(function(k){var a=geo.attributes[k];if(a)a.onUpload(function(){this.array=null})});
+    if(geo.index)geo.index.onUpload(function(){this.array=null});
+   });}
+   (n.children||[]).forEach(function(c){walk(c,wm)});
+  }
+  sc.nodes.forEach(function(ni){walk(ni,new THREE.Matrix4())});
+  if(!meshes.length)throw new Error('三角形メッシュが見つかりませんでした。');
+  root=grp;scene.add(root);g=null;buf=null;
+  var c=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3());
+  homeR=Math.max(sz.y,sz.x*0.8)*0.5/Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*1.2+sz.z*0.5;homeT.copy(c);
+  camera.near=homeR/200;camera.far=homeR*20;camera.updateProjectionMatrix();
+  if(low&&$('mode').value==='toon')$('mode').value='toonNoLine';
+  applyStyle();resetView();
+  stage='GPU転送';prog(88,'GPUへ転送中');await tick();
+  var t0=performance.now();renderer.render(scene,camera);renderer.getContext().finish();var dt=performance.now()-t0;
+  var tw=maps.filter(Boolean)[0];var texMB=tw?(tw.userData.w*tw.userData.h*4*1.33/1048576):0;
+  $('info').textContent=nv.toLocaleString()+' 頂点 / '+Math.round(nt).toLocaleString()+' 三角形 / テクスチャ '+(tw?tw.userData.w+'px':'なし')+' / 推定 '+Math.round(bytes/1048576*2+texMB*2)+'MB / '+(low?'低負荷':'通常')+' / 初回描画 '+Math.round(dt)+'ms'+($('info').dataset.warn?' / ⚠'+$('info').dataset.warn:'');
+  prog(100,'完了');showOv('prog',false);dirty=true;
+  if(!low&&dt>1500&&!autoRetried){autoRetried=true;$('perf').value='low';load(file,'low')}
+ }catch(e){if(id===runId){console.error(e);fail('読み込みに失敗しました（段階: '+stage+'）',e,stage)}}
+}
+function init(){
+ try{renderer=new THREE.WebGLRenderer({antialias:!IOS,powerPreference:'default'})}catch(e){fail('WebGLを開始できません',e,'初期化');return}
+ renderer.outputEncoding=THREE.sRGBEncoding;renderer.setClearColor(0xe9edf2,1);$('stage').appendChild(renderer.domElement);
+ renderer.domElement.addEventListener('webglcontextlost',function(e){e.preventDefault();fail('GPUメモリ不足でWebGLが停止しました','端末のメモリが足りません。「低負荷で再試行」を押してください。','描画')});
+ scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(30,1,0.01,100);scene.add(camera);
+ scene.add(new THREE.AmbientLight(0xffffff,0.35));var d=new THREE.DirectionalLight(0xffffff,1);d.position.set(-1.5,2.5,2);camera.add(d);d.target.position.set(0,0,-1);camera.add(d.target);
+ lineMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{thick:{value:0.0018},col:{value:new THREE.Color(0x14161c)}},vertexShader:'uniform float thick;void main(){vec3 p=position+normalize(normal)*thick;gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}',fragmentShader:'uniform vec3 col;void main(){gl_FragColor=vec4(col,1.0);}'});
+ var el=renderer.domElement,ptr={},pd=0;
+ function two(){var k=Object.keys(ptr);return k.length===2?[ptr[k[0]],ptr[k[1]]]:null}
+ el.addEventListener('pointerdown',function(e){el.setPointerCapture(e.pointerId);ptr[e.pointerId]={x:e.clientX,y:e.clientY};var t=two();if(t)pd=Math.hypot(t[0].x-t[1].x,t[0].y-t[1].y)});
+ el.addEventListener('pointermove',function(e){var p=ptr[e.pointerId];if(!p)return;var t=two();
+  if(t){var o=t[0]===p?t[1]:t[0],pm={x:(p.x+o.x)/2,y:(p.y+o.y)/2};p.x=e.clientX;p.y=e.clientY;var nm={x:(p.x+o.x)/2,y:(p.y+o.y)/2},nd=Math.hypot(p.x-o.x,p.y-o.y);
+   if(pd>0&&nd>0)sph.r=Math.max(homeR*0.15,Math.min(homeR*4,sph.r*pd/nd));pd=nd;
+   var k=sph.r*0.0016,R=new THREE.Vector3().setFromMatrixColumn(camera.matrix,0),U=new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+   tgt.addScaledVector(R,-(nm.x-pm.x)*k).addScaledVector(U,(nm.y-pm.y)*k)}
+  else{sph.theta-=(e.clientX-p.x)*0.008;sph.phi=Math.max(0.05,Math.min(Math.PI-0.05,sph.phi-(e.clientY-p.y)*0.008));p.x=e.clientX;p.y=e.clientY}
+  updCam()});
+ function up(e){delete ptr[e.pointerId]}el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
+ el.addEventListener('wheel',function(e){e.preventDefault();sph.r=Math.max(homeR*0.15,Math.min(homeR*4,sph.r*Math.exp(e.deltaY*0.001)));updCam()},{passive:false});
+ window.addEventListener('resize',setSize);setSize();
+ ['steps','shadow','thick','mode'].forEach(function(k){$(k).addEventListener('input',applyStyle)});
+ $('reset').onclick=resetView;
+ $('file').onchange=function(e){var f=e.target.files&&e.target.files[0];if(f){autoRetried=false;load(f,$('perf').value)}e.target.value=''};
+ $('perf').onchange=function(){if(curFile){autoRetried=true;load(curFile,$('perf').value)}};
+ $('cancel').onclick=function(){runId++;showOv('prog',false);showOv('hint',!root)};
+ $('errClose').onclick=function(){showOv('err',false);showOv('hint',!root)};
+ $('retryLow').onclick=function(){showOv('err',false);if(curFile){$('perf').value='low';autoRetried=true;load(curFile,'low')}};
+ window.addEventListener('error',function(e){fail('予期しないエラー',e.message,'実行時')});
+ window.addEventListener('unhandledrejection',function(e){fail('予期しないエラー',e.reason,'実行時')});
+ showOv('hint',true);
+ (function loop(){requestAnimationFrame(loop);if(dirty&&root){dirty=false;renderer.render(scene,camera)}})();
+}
+init();
+</script>
+</body>
+</html>
