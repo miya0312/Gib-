@@ -17,11 +17,9 @@ export class Player {
     async initModel() {
         const loader = new GLTFLoader();
         try {
-            // assets/models/player.glb がある場合は読み込む
             const gltf = await loader.loadAsync('assets/models/player.glb');
             const model = gltf.scene;
             
-            // 影のキャスト設定
             model.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
@@ -33,18 +31,15 @@ export class Player {
             
             if (gltf.animations && gltf.animations.length > 0) {
                 this.mixer = new THREE.AnimationMixer(model);
-                // 後に待機・走行アニメーションを管理する処理をここに追加
             }
         } catch (error) {
-            console.warn("player.glbが見つかりません。テスト用のダミーキャラクターを生成します。");
             this.createDummyCharacter();
         }
     }
 
     createDummyCharacter() {
-        // ヒト型に近いカプセル形状のダミー
         const geometry = new THREE.CapsuleGeometry(0.5, 1.0, 4, 16);
-        geometry.translate(0, 1.0, 0); // 足元を原点に合わせる
+        geometry.translate(0, 1.0, 0); 
         
         const material = new THREE.MeshStandardMaterial({ 
             color: 0xff4444, 
@@ -56,7 +51,6 @@ export class Player {
         capsule.castShadow = true;
         capsule.receiveShadow = true;
         
-        // 向きが視覚的にわかるように「鼻」をつける
         const noseGeo = new THREE.BoxGeometry(0.2, 0.2, 0.4);
         noseGeo.translate(0, 1.5, 0.5);
         const noseMat = new THREE.MeshStandardMaterial({ color: 0x4444ff });
@@ -72,23 +66,23 @@ export class Player {
         }
 
         const moveX = controls.moveVector.x;
-        const moveY = controls.moveVector.y; // 前後移動（スティックの上 = 負, 下 = 正）
+        const moveY = controls.moveVector.y; 
 
         if (moveX !== 0 || moveY !== 0) {
-            // カメラの向きを取得し、Y軸のみの回転に制限する
-            const cameraDirection = new THREE.Vector3();
-            camera.getWorldDirection(cameraDirection);
-            cameraDirection.y = 0;
-            cameraDirection.normalize();
+            // 1. カメラの前方ベクトルを取得
+            const cameraForward = new THREE.Vector3();
+            camera.getWorldDirection(cameraForward);
+            cameraForward.y = 0;
+            cameraForward.normalize();
 
-            // カメラの右方向ベクトルを計算
+            // 2. カメラの右方向ベクトルを計算（ここが反転の原因でした。順序を修正済）
             const cameraRight = new THREE.Vector3();
-            cameraRight.crossVectors(camera.up, cameraDirection).normalize();
+            cameraRight.crossVectors(cameraForward, camera.up).normalize();
 
-            // 入力に基づいた移動ベクトルを計算
+            // 3. 入力に基づいた移動ベクトルを計算
             const moveDirection = new THREE.Vector3();
-            moveDirection.addScaledVector(cameraRight, moveX);
-            moveDirection.addScaledVector(cameraDirection, -moveY);
+            moveDirection.addScaledVector(cameraRight, moveX); // 右・左
+            moveDirection.addScaledVector(cameraForward, -moveY); // 前・後（スティック上はYがマイナスなので反転させて前へ）
             moveDirection.normalize();
 
             // 移動の適用
