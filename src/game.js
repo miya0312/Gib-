@@ -8,35 +8,35 @@ export class Game {
     constructor() {
         this.clock = new THREE.Clock();
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x87ceeb); // 追って天球（Skybox）に差し替えます
+        this.scene.background = new THREE.Color(0x87ceeb);
         
         this.cameraManager = new CameraManager();
         this.rendererManager = new RendererManager(this.scene, this.cameraManager.camera);
         this.controlsManager = new ControlsManager();
         
         this.player = null;
+        this.directionalLight = null;
         this.isRunning = false;
     }
 
     async init() {
         this.setupEnvironment();
-        this.player = new Player(this.scene);
+        // Playerにライトとカメラを渡すよう変更
+        this.player = new Player(this.scene, this.directionalLight, this.cameraManager.camera);
         
         window.addEventListener('resize', this.onWindowResize.bind(this), false);
     }
 
     setupEnvironment() {
-        // 環境光
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambientLight);
 
-        // 平行光源
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        directionalLight.position.set(10, 20, 10);
-        directionalLight.castShadow = true;
-        this.scene.add(directionalLight);
+        // クラスのプロパティとして保持
+        this.directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        this.directionalLight.position.set(10, 20, 10);
+        this.directionalLight.castShadow = true;
+        this.scene.add(this.directionalLight);
 
-        // 仮の地面
         const groundGeo = new THREE.PlaneGeometry(100, 100);
         const groundMat = new THREE.MeshStandardMaterial({ 
             color: 0x336633,
@@ -48,7 +48,6 @@ export class Game {
         ground.receiveShadow = true;
         this.scene.add(ground);
 
-        // グリッドを広く
         const gridHelper = new THREE.GridHelper(100, 100);
         this.scene.add(gridHelper);
     }
@@ -66,10 +65,8 @@ export class Game {
         
         const deltaTime = this.clock.getDelta();
         
-        // プレイヤーの更新
         if (this.player) {
             this.player.update(deltaTime, this.controlsManager, this.cameraManager.camera);
-            // カメラの追従
             this.cameraManager.update(this.player.mesh);
         }
 
