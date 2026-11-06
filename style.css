@@ -46,3 +46,41 @@ body, html {
     letter-spacing: 2px;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
+/* 以下を既存の style.css の末尾に追加 */
+
+#joystick-zone {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    pointer-events: auto; /* ここだけタッチイベントを有効化 */
+}
+
+#joystick-base {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 120px;
+    height: 120px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: none; /* タッチ時のみ表示 */
+}
+
+#joystick-stick {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
